@@ -276,7 +276,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             @Override
             protected void done() {
                 try {
-                    contactos = get();
+                    List<persona> cargados = get();
+                    synchronized (contactosLock) {
+                        contactos = cargados;
+                    }
                     refrescarTabla();
                     actualizarEstadisticas();
                 } catch (Exception e) {
@@ -676,23 +679,26 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     }
 
     private void actualizarEstadisticas() {
-        int total = contactos.size();
+        int total = 0;
         int favoritosCount = 0;
         int familia = 0;
         int amigos = 0;
         int trabajo = 0;
 
-        for (persona p : contactos) {
-            if (p.isFavorito()) {
-                favoritosCount++;
-            }
+        synchronized (contactosLock) {
+            total = contactos.size();
+            for (persona p : contactos) {
+                if (p.isFavorito()) {
+                    favoritosCount++;
+                }
 
-            if (CAT_FAMILY.equalsIgnoreCase(p.getCategoria())) {
-                familia++;
-            } else if (CAT_FRIENDS.equalsIgnoreCase(p.getCategoria())) {
-                amigos++;
-            } else if (CAT_WORK.equalsIgnoreCase(p.getCategoria())) {
-                trabajo++;
+                if (CAT_FAMILY.equalsIgnoreCase(p.getCategoria())) {
+                    familia++;
+                } else if (CAT_FRIENDS.equalsIgnoreCase(p.getCategoria())) {
+                    amigos++;
+                } else if (CAT_WORK.equalsIgnoreCase(p.getCategoria())) {
+                    trabajo++;
+                }
             }
         }
 
