@@ -9,6 +9,8 @@ import java.awt.event.ItemListener;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.io.IOException;
 import java.text.MessageFormat;
@@ -16,6 +18,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
@@ -28,6 +34,7 @@ import javax.swing.KeyStroke;
 import javax.swing.JPanel;
 import javax.swing.RowFilter;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -74,6 +81,16 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     private final javax.swing.Icon iconStarOn = SvgIconLoader.load("star-filled.svg", 16, 16);
     private final javax.swing.Icon iconStarOff = SvgIconLoader.load("star-outline.svg", 16, 16);
 
+    private final Object contactosLock = new Object();
+    private final Object exportLock = new Object();
+    private final ReentrantLock editLock = new ReentrantLock();
+    private int editLockIndex = -1;
+    private final ExecutorService exportExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService notificationExecutor = Executors.newSingleThreadExecutor();
+    private final AtomicInteger searchSeq = new AtomicInteger(0);
+    private final AtomicInteger busyCount = new AtomicInteger(0);
+    private SwingWorker<RowFilter<Object, Object>, Void> searchWorker;
+
     public logica_ventana(ventana delegado) {
         this.delegado = delegado;
         this.dao = new personaDAO(new persona());
@@ -84,8 +101,19 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         configurarTablaYFiltro();
         configurarAtajos();
         configurarMenuContextual();
+        configurarCierre();
         aplicarIdioma(I18n.LANG_ES);
         cargarContactosRegistrados();
+    }
+
+    private void configurarCierre() {
+        delegado.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                exportExecutor.shutdown();
+                notificationExecutor.shutdown();
+            }
+        });
     }
 
     private void configurarEventos() {
@@ -122,17 +150,17 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         delegado.txt_buscar.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
-                aplicarFiltro();
+                solicitarBusquedaAsync();
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
-                aplicarFiltro();
+                solicitarBusquedaAsync();
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
-                aplicarFiltro();
+                solicitarBusquedaAsync();
             }
         });
 
@@ -267,39 +295,81 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     private void refrescarTabla() {
         DefaultTableModel model = delegado.modeloTabla;
         model.setRowCount(0);
-        for (persona p : contactos) {
-            model.addRow(new Object[] {
-                p.getNombre(),
-                p.getTelefono(),
-                p.getEmail(),
-                categoriaLabelPorCodigo(p.getCategoria()),
-                Boolean.valueOf(p.isFavorito())
-            });
+        synchronized (contactosLock) {
+            for (persona p : contactos) {
+                model.addRow(new Object[] {
+                    p.getNombre(),
+                    p.getTelefono(),
+                    p.getEmail(),
+                    categoriaLabelPorCodigo(p.getCategoria()),
+                    Boolean.valueOf(p.isFavorito())
+                });
+            }
         }
-        aplicarFiltro();
+        solicitarBusquedaAsync();
         configurarColumnasTabla();
     }
 
+    private void solicitarBusquedaAsync() {
+        final String texto = delegado.txt_buscar.getText() == null ? "" : delegado.txt_buscar.getText().trim();
+        final String codigoFiltroCategoria = obtenerCodigoCategoriaFiltro();
+        final int seq = searchSeq.incrementAndGet();
+
+        if (searchWorker != null && !searchWorker.isDone()) {
+            searchWorker.cancel(true);
+        }
+
+        // Busqueda en segundo plano para evitar bloqueos en UI con listas grandes.
+        notificarAsync(i18n.t("status.searching"));
+        searchWorker = new SwingWorker<RowFilter<Object, Object>, Void>() {
+            @Override
+            protected RowFilter<Object, Object> doInBackground() {
+                List<RowFilter<Object, Object>> filtros = new ArrayList<RowFilter<Object, Object>>();
+
+                if (!texto.isEmpty()) {
+                    String patron = "(?i)" + Pattern.quote(texto);
+                    filtros.add(RowFilter.regexFilter(patron, COL_NOMBRE, COL_TELEFONO, COL_EMAIL));
+                }
+
+                if (!codigoFiltroCategoria.isEmpty()) {
+                    filtros.add(RowFilter.regexFilter("^" + Pattern.quote(categoriaLabelPorCodigo(codigoFiltroCategoria)) + "$", COL_CATEGORIA));
+                }
+
+                if (filtros.isEmpty()) {
+                    return null;
+                }
+                return RowFilter.andFilter(filtros);
+            }
+
+            @Override
+            protected void done() {
+                if (isCancelled() || seq != searchSeq.get()) {
+                    return;
+                }
+
+                RowFilter<Object, Object> filtro = null;
+                try {
+                    filtro = get();
+                } catch (Exception ex) {
+                    filtro = null;
+                }
+
+                final RowFilter<Object, Object> filtroFinal = filtro;
+                SwingUtilities.invokeLater(new Runnable() {
+                    @Override
+                    public void run() {
+                        sorter.setRowFilter(filtroFinal);
+                        actualizarEstado(i18n.t("status.ready"));
+                    }
+                });
+            }
+        };
+
+        searchWorker.execute();
+    }
+
     private void aplicarFiltro() {
-        String texto = delegado.txt_buscar.getText() == null ? "" : delegado.txt_buscar.getText().trim();
-        String codigoFiltroCategoria = obtenerCodigoCategoriaFiltro();
-
-        List<RowFilter<Object, Object>> filtros = new ArrayList<RowFilter<Object, Object>>();
-
-        if (!texto.isEmpty()) {
-            String patron = "(?i)" + Pattern.quote(texto);
-            filtros.add(RowFilter.regexFilter(patron, COL_NOMBRE, COL_TELEFONO, COL_EMAIL));
-        }
-
-        if (!codigoFiltroCategoria.isEmpty()) {
-            filtros.add(RowFilter.regexFilter("^" + Pattern.quote(categoriaLabelPorCodigo(codigoFiltroCategoria)) + "$", COL_CATEGORIA));
-        }
-
-        if (filtros.isEmpty()) {
-            sorter.setRowFilter(null);
-        } else {
-            sorter.setRowFilter(RowFilter.andFilter(filtros));
-        }
+        solicitarBusquedaAsync();
     }
 
     private void inicializacionCampos() {
@@ -344,7 +414,9 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
 
     private void guardarCambiosDisco() {
         try {
-            dao.actualizarContactos(contactos);
+            synchronized (contactosLock) {
+                dao.actualizarContactos(contactos);
+            }
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(delegado, i18n.t("msg.saveError"));
         }
@@ -356,13 +428,20 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             return;
         }
 
-        persona p = new persona(nombres, telefono, email, categoria, favorito);
-        contactos.add(p);
-        guardarCambiosDisco();
-        refrescarTabla();
-        actualizarEstadisticas();
-        limpiarCampos();
-        JOptionPane.showMessageDialog(delegado, i18n.t("msg.added"));
+        validarContactoAsync(-1, new Runnable() {
+            @Override
+            public void run() {
+                persona p = new persona(nombres, telefono, email, categoria, favorito);
+                synchronized (contactosLock) {
+                    contactos.add(p);
+                }
+                guardarCambiosDisco();
+                refrescarTabla();
+                actualizarEstadisticas();
+                limpiarCampos();
+                notificarAsync(i18n.t("msg.added"));
+            }
+        });
     }
 
     private void modificarContactoSeleccionado() {
@@ -372,22 +451,36 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             return;
         }
 
-        inicializacionCampos();
-        if (!validarCampos()) {
+        if (!bloquearEdicion(index)) {
+            JOptionPane.showMessageDialog(delegado, i18n.t("msg.editLocked"));
             return;
         }
 
-        persona p = contactos.get(index);
-        p.setNombre(nombres);
-        p.setTelefono(telefono);
-        p.setEmail(email);
-        p.setCategoria(categoria);
-        p.setFavorito(favorito);
+        inicializacionCampos();
+        if (!validarCampos()) {
+            liberarEdicionSiCorresponde(index);
+            return;
+        }
 
-        guardarCambiosDisco();
-        refrescarTabla();
-        actualizarEstadisticas();
-        JOptionPane.showMessageDialog(delegado, i18n.t("msg.updated"));
+        validarContactoAsync(index, new Runnable() {
+            @Override
+            public void run() {
+                synchronized (contactosLock) {
+                    persona p = contactos.get(index);
+                    p.setNombre(nombres);
+                    p.setTelefono(telefono);
+                    p.setEmail(email);
+                    p.setCategoria(categoria);
+                    p.setFavorito(favorito);
+                }
+
+                guardarCambiosDisco();
+                refrescarTabla();
+                actualizarEstadisticas();
+                liberarEdicionSiCorresponde(index);
+                notificarAsync(i18n.t("msg.updated"));
+            }
+        });
     }
 
     private void eliminarSeleccionado() {
@@ -408,11 +501,15 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             return;
         }
 
-        contactos.remove(index);
+        synchronized (contactosLock) {
+            contactos.remove(index);
+        }
         guardarCambiosDisco();
         refrescarTabla();
         actualizarEstadisticas();
         limpiarCampos();
+        liberarEdicionSiCorresponde(index);
+        notificarAsync(i18n.t("msg.deleted"));
     }
 
     private void alternarFavoritoSeleccionado() {
@@ -422,8 +519,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             return;
         }
 
-        persona p = contactos.get(index);
-        p.setFavorito(!p.isFavorito());
+        synchronized (contactosLock) {
+            persona p = contactos.get(index);
+            p.setFavorito(!p.isFavorito());
+        }
         guardarCambiosDisco();
         refrescarTabla();
         actualizarEstadisticas();
@@ -434,6 +533,11 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         int index = obtenerIndiceModeloSeleccionado();
         if (index < 0) {
             JOptionPane.showMessageDialog(delegado, i18n.t("msg.selectContact"));
+            return;
+        }
+
+        if (!bloquearEdicion(index)) {
+            JOptionPane.showMessageDialog(delegado, i18n.t("msg.editLocked"));
             return;
         }
 
@@ -477,14 +581,40 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             }
         }
 
-        List<persona> visibles = obtenerContactosVisibles();
+        final File destinoFinal = destino;
+        final List<persona> visibles = obtenerContactosVisibles();
+        final String[] cabeceras = obtenerCabecerasCsv();
+        final List<String[]> filas = construirFilasCsv(visibles);
 
-        try {
-            dao.exportarCsv(destino, obtenerCabecerasCsv(), construirFilasCsv(visibles));
-            JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.exported"), destino.getAbsolutePath()));
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(delegado, i18n.t("msg.exportError"));
-        }
+        setUiBusy(true);
+        notificarAsync(i18n.t("status.exporting"));
+        // Exportacion en segundo plano con sincronizacion para evitar corrupcion.
+        exportExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    synchronized (exportLock) {
+                        dao.exportarCsv(destinoFinal, cabeceras, filas);
+                    }
+                    notificarAsync(i18n.t("status.exported"));
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.exported"), destinoFinal.getAbsolutePath()));
+                        }
+                    });
+                } catch (IOException ex) {
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            JOptionPane.showMessageDialog(delegado, i18n.t("msg.exportError"));
+                        }
+                    });
+                }
+            }
+        });
     }
 
     private String[] obtenerCabecerasCsv() {
@@ -516,26 +646,33 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
 
     private List<persona> obtenerContactosVisibles() {
         List<persona> visibles = new ArrayList<persona>();
-        for (int filaVista = 0; filaVista < delegado.tbl_contactos.getRowCount(); filaVista++) {
-            int filaModelo = delegado.tbl_contactos.convertRowIndexToModel(filaVista);
-            if (filaModelo >= 0 && filaModelo < contactos.size()) {
-                visibles.add(contactos.get(filaModelo));
+        synchronized (contactosLock) {
+            for (int filaVista = 0; filaVista < delegado.tbl_contactos.getRowCount(); filaVista++) {
+                int filaModelo = delegado.tbl_contactos.convertRowIndexToModel(filaVista);
+                if (filaModelo >= 0 && filaModelo < contactos.size()) {
+                    visibles.add(contactos.get(filaModelo));
+                }
             }
         }
         return visibles;
     }
 
     private void cargarContacto(int indexModelo) {
-        if (indexModelo < 0 || indexModelo >= contactos.size()) {
+        if (indexModelo < 0) {
             return;
         }
 
-        persona p = contactos.get(indexModelo);
-        delegado.txt_nombres.setText(p.getNombre());
-        delegado.txt_telefono.setText(p.getTelefono());
-        delegado.txt_email.setText(p.getEmail());
-        delegado.chb_favorito.setSelected(p.isFavorito());
-        delegado.cmb_categoria.setSelectedIndex(indiceCategoriaFormulario(p.getCategoria()));
+        synchronized (contactosLock) {
+            if (indexModelo >= contactos.size()) {
+                return;
+            }
+            persona p = contactos.get(indexModelo);
+            delegado.txt_nombres.setText(p.getNombre());
+            delegado.txt_telefono.setText(p.getTelefono());
+            delegado.txt_email.setText(p.getEmail());
+            delegado.chb_favorito.setSelected(p.isFavorito());
+            delegado.cmb_categoria.setSelectedIndex(indiceCategoriaFormulario(p.getCategoria()));
+        }
     }
 
     private void actualizarEstadisticas() {
@@ -735,6 +872,136 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         refrescarTabla();
         actualizarEstadisticas();
         actualizarEstado(i18n.t("status.ready"));
+    }
+
+    private void validarContactoAsync(final int indexIgnorado, final Runnable onValid) {
+        setUiBusy(true);
+        notificarAsync(i18n.t("status.validating"));
+
+        SwingWorker<Boolean, Void> worker = new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                synchronized (contactosLock) {
+                    for (int i = 0; i < contactos.size(); i++) {
+                        if (i == indexIgnorado) {
+                            continue;
+                        }
+                        if (esDuplicado(contactos.get(i), nombres, telefono, email)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            @Override
+            protected void done() {
+                boolean duplicado = false;
+                try {
+                    duplicado = get();
+                } catch (Exception ex) {
+                    duplicado = false;
+                }
+
+                final boolean duplicadoFinal = duplicado;
+                SwingUtilities.invokeLater(new Runnable() {
+                    @Override
+                    public void run() {
+                        setUiBusy(false);
+                        if (duplicadoFinal) {
+                            JOptionPane.showMessageDialog(delegado, i18n.t("msg.duplicateContact"));
+                            notificarAsync(i18n.t("status.duplicate"));
+                            if (indexIgnorado >= 0) {
+                                liberarEdicionSiCorresponde(indexIgnorado);
+                            }
+                            return;
+                        }
+                        onValid.run();
+                    }
+                });
+            }
+        };
+
+        worker.execute();
+    }
+
+    private boolean esDuplicado(persona existente, String nombre, String telefono, String email) {
+        if (existente == null) {
+            return false;
+        }
+        String emailNuevo = email == null ? "" : email.trim().toLowerCase();
+        String emailExistente = existente.getEmail() == null ? "" : existente.getEmail().trim().toLowerCase();
+        String telNuevo = telefono == null ? "" : telefono.trim();
+        String telExistente = existente.getTelefono() == null ? "" : existente.getTelefono().trim();
+
+        if (!emailNuevo.isEmpty() && emailNuevo.equals(emailExistente)) {
+            return true;
+        }
+        return !telNuevo.isEmpty() && telNuevo.equals(telExistente);
+    }
+
+    private boolean bloquearEdicion(int index) {
+        // Bloqueo de recurso para que solo una edicion ocurra a la vez.
+        if (editLock.tryLock()) {
+            editLockIndex = index;
+            return true;
+        }
+        return editLockIndex == index;
+    }
+
+    private void liberarEdicionSiCorresponde(int index) {
+        if (editLockIndex == index && editLock.isHeldByCurrentThread()) {
+            editLockIndex = -1;
+            editLock.unlock();
+        }
+    }
+
+    private void setUiBusy(boolean busy) {
+        int count = busy
+            ? busyCount.incrementAndGet()
+            : busyCount.updateAndGet(new java.util.function.IntUnaryOperator() {
+                @Override
+                public int applyAsInt(int value) {
+                    return value > 0 ? value - 1 : 0;
+                }
+            });
+        final boolean uiBusy = count > 0;
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                delegado.btn_add.setEnabled(!uiBusy);
+                delegado.btn_modificar.setEnabled(!uiBusy);
+                delegado.btn_eliminar.setEnabled(!uiBusy);
+                delegado.btn_exportar.setEnabled(!uiBusy);
+                delegado.cmb_categoria.setEnabled(!uiBusy);
+                delegado.cmb_filtro_categoria.setEnabled(!uiBusy);
+                delegado.cmb_idioma.setEnabled(!uiBusy);
+                delegado.txt_buscar.setEnabled(!uiBusy);
+                delegado.txt_nombres.setEnabled(!uiBusy);
+                delegado.txt_telefono.setEnabled(!uiBusy);
+                delegado.txt_email.setEnabled(!uiBusy);
+                delegado.chb_favorito.setEnabled(!uiBusy);
+                delegado.pgb_carga.setIndeterminate(uiBusy);
+                if (!uiBusy) {
+                    delegado.pgb_carga.setValue(0);
+                }
+            }
+        });
+    }
+
+    private void notificarAsync(final String mensaje) {
+        // Notificacion en hilo dedicado; UI se actualiza via invokeLater.
+        notificationExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                SwingUtilities.invokeLater(new Runnable() {
+                    @Override
+                    public void run() {
+                        actualizarEstado(mensaje);
+                    }
+                });
+            }
+        });
     }
 
     private void configurarColumnasTabla() {

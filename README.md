@@ -63,12 +63,19 @@ Esta version mejora la experiencia de usuario con una interfaz mas moderna y est
 - Controlador:
   - `src/controlador/logica_ventana.java`: eventos, validaciones, i18n, filtros y sincronizacion.
 
+### 6) U3: Concurrencia y sincronizacion
+- Busqueda asincrona con cancelacion para listas grandes (SwingWorker).
+- Exportacion CSV en pool de hilos con lock para evitar corrupcion.
+- Validacion de duplicados en segundo plano y estado UI ocupado.
+- Bloqueo de edicion para prevenir modificaciones simultaneas.
+- Notificaciones de estado en hilo dedicado con actualizacion segura del UI.
+
 ## Ejecucion rapida (PowerShell)
 ```powershell
 Set-Location "C:\Users\Freddy Potes\IdeaProjects\u1c5_AGC"
 if (!(Test-Path .\out)) { New-Item -ItemType Directory -Path .\out | Out-Null }
-javac -d .\out .\src\modelo\*.java .\src\controlador\*.java .\src\vista\*.java .\src\vista\i18n\*.java .\src\vista\theme\*.java
-java -cp .\out vista.ventana
+javac -cp ".\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" -d .\out .\src\modelo\*.java .\src\controlador\*.java .\src\vista\*.java .\src\vista\charts\*.java .\src\vista\i18n\*.java .\src\vista\theme\*.java
+java -cp ".\out;.\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" vista.ventana
 ```
 
 ## Opcion con Maven (incluye FlatLaf)
