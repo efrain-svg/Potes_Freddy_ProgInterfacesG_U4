@@ -67,3 +67,31 @@ La fecha mostrada en estado/estadisticas se formatea segun el `Locale` activo. E
 - **Controlador**: `src/controlador/logica_ventana.java`.
 
 Esta separacion facilita mantenimiento, pruebas y extension de funcionalidades.
+
+## 8) Unidad 3: Concurrencia, sincronizacion y rendimiento
+Se incorporo programacion concurrente para mantener la UI fluida y evitar bloqueos en operaciones pesadas.
+
+### 8.1) Validacion de duplicados en segundo plano
+- Se usa `SwingWorker` para validar si correo/telefono ya existen sin congelar la interfaz.
+- La UI muestra estado de "validando" y bloquea acciones sensibles mientras corre la validacion.
+
+### 8.2) Busqueda asincrona
+- La busqueda de contactos corre en segundo plano y se cancela cuando el usuario sigue escribiendo.
+- Esto evita congelamientos al filtrar listas grandes.
+
+### 8.3) Exportacion concurrente de CSV
+- La exportacion se ejecuta en un `ExecutorService` con varios hilos.
+- Se sincroniza el acceso al archivo con un lock para evitar corrupcion si hay multiples exportaciones.
+
+### 8.4) Notificaciones en la interfaz mediante subprocesos
+- Se usa un hilo dedicado para notificaciones y `SwingUtilities.invokeLater()` para actualizar la UI de forma segura.
+- Se muestran mensajes como "exportacion completada" o "contacto guardado" en tiempo real.
+
+### 8.5) Sincronizacion y seguridad en modificaciones
+- Se usa `synchronized` al leer/modificar la lista de contactos compartida.
+- Se implementa un bloqueo de edicion (`ReentrantLock`) para evitar ediciones simultaneas del mismo contacto.
+
+### 8.6) Justificacion tecnica
+- Separar tareas pesadas en hilos evita bloqueos del Event Dispatch Thread.
+- La sincronizacion previene condiciones de carrera y protege el estado de datos.
+- La cancelacion de busqueda y los locks mejoran la estabilidad en uso intensivo.
