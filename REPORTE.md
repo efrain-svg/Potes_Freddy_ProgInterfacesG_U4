@@ -95,3 +95,7 @@ Se incorporo programacion concurrente para mantener la UI fluida y evitar bloque
 - Separar tareas pesadas en hilos evita bloqueos del Event Dispatch Thread.
 - La sincronizacion previene condiciones de carrera y protege el estado de datos.
 - La cancelacion de busqueda y los locks mejoran la estabilidad en uso intensivo.
+
+### 8.7) Correcciones de seguridad de datos
+- Se sincronizo el reemplazo de la lista de contactos al cargar desde disco para evitar lecturas inconsistentes.
+- El calculo de estadisticas se protege con `synchronized` para prevenir condiciones de carrera.

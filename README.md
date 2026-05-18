@@ -75,8 +75,10 @@ Esta version mejora la experiencia de usuario con una interfaz mas moderna y est
 Set-Location "C:\Users\Freddy Potes\IdeaProjects\u1c5_AGC"
 if (!(Test-Path .\out)) { New-Item -ItemType Directory -Path .\out | Out-Null }
 javac -cp ".\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" -d .\out .\src\modelo\*.java .\src\controlador\*.java .\src\vista\*.java .\src\vista\charts\*.java .\src\vista\i18n\*.java .\src\vista\theme\*.java
-java -cp ".\out;.\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" vista.ventana
+java --enable-native-access=ALL-UNNAMED -cp ".\out;.\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" vista.ventana
 ```
+
+> Nota: El flag `--enable-native-access=ALL-UNNAMED` evita warnings de acceso nativo en Java recientes al usar FlatLaf.
 
 ## Opcion con Maven (incluye FlatLaf)
 ```powershell
