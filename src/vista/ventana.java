@@ -68,6 +68,8 @@ public class ventana extends JFrame {
     public JButton btn_modificar;
     public JButton btn_eliminar;
     public JButton btn_exportar;
+    public JButton btn_importar_json;
+    public JButton btn_exportar_json;
     public JTable tbl_contactos;
     public DefaultTableModel modeloTabla;
     public JProgressBar pgb_carga;
@@ -230,13 +232,19 @@ public class ventana extends JFrame {
         aplicarIconoBoton(btn_add, "add.svg");
         btn_modificar = crearBotonSecundario("Modificar");
         aplicarIconoBoton(btn_modificar, "edit.svg");
-        btn_eliminar = crearBotonPeligro("Eliminar");
-        aplicarIconoBoton(btn_eliminar, "delete-white.svg");
+        btn_importar_json = crearBotonSecundario("Importar JSON");
+        aplicarIconoBoton(btn_importar_json, "add.svg");
         btn_exportar = crearBotonSecundario("Exportar CSV");
         aplicarIconoBoton(btn_exportar, "export.svg");
+        btn_exportar_json = crearBotonSecundario("Exportar JSON");
+        aplicarIconoBoton(btn_exportar_json, "export.svg");
+        btn_eliminar = crearBotonPeligro("Eliminar");
+        aplicarIconoBoton(btn_eliminar, "delete-white.svg");
         panelAcciones.add(btn_add);
         panelAcciones.add(btn_modificar);
+        panelAcciones.add(btn_importar_json);
         panelAcciones.add(btn_exportar);
+        panelAcciones.add(btn_exportar_json);
         panelAcciones.add(btn_eliminar);
 
         gbcContenido.gridy = 1;

@@ -40,6 +40,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableCellRenderer;
@@ -121,6 +122,8 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         delegado.btn_eliminar.addActionListener(this);
         delegado.btn_modificar.addActionListener(this);
         delegado.btn_exportar.addActionListener(this);
+        delegado.btn_importar_json.addActionListener(this);
+        delegado.btn_exportar_json.addActionListener(this);
         delegado.cmb_categoria.addItemListener(this);
         delegado.cmb_filtro_categoria.addItemListener(this);
         delegado.cmb_idioma.addItemListener(this);
@@ -620,6 +623,121 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         });
     }
 
+    private void exportarJson() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle(i18n.t("msg.exportJsonDialog"));
+        chooser.setFileFilter(new FileNameExtensionFilter("JSON (*.json)", "json"));
+        chooser.setSelectedFile(new File(i18n.t("json.filename") + ".json"));
+
+        int opcion = chooser.showSaveDialog(delegado);
+        if (opcion != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File destino = chooser.getSelectedFile();
+        if (!destino.getName().toLowerCase().endsWith(".json")) {
+            destino = new File(destino.getParentFile(), destino.getName() + ".json");
+        }
+
+        if (destino.exists()) {
+            int confirmacion = JOptionPane.showConfirmDialog(
+                delegado,
+                i18n.t("msg.overwriteQuestion"),
+                i18n.t("msg.confirmTitle"),
+                JOptionPane.YES_NO_OPTION
+            );
+            if (confirmacion != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+
+        final File destinoFinal = destino;
+        final List<persona> visibles = obtenerContactosVisibles();
+
+        setUiBusy(true);
+        notificarAsync(i18n.t("status.exportingJson"));
+        exportExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    synchronized (exportLock) {
+                        dao.exportarJson(destinoFinal, visibles);
+                    }
+                    notificarAsync(i18n.t("status.exportedJson"));
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.exportedJson"), destinoFinal.getAbsolutePath()));
+                        }
+                    });
+                } catch (IOException ex) {
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            JOptionPane.showMessageDialog(delegado, i18n.t("msg.exportJsonError"));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void importarJson() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle(i18n.t("msg.importJsonDialog"));
+        chooser.setFileFilter(new FileNameExtensionFilter("JSON (*.json)", "json"));
+
+        int opcion = chooser.showOpenDialog(delegado);
+        if (opcion != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        final File fuente = chooser.getSelectedFile();
+        setUiBusy(true);
+        notificarAsync(i18n.t("status.importing"));
+
+        exportExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    List<persona> importados = dao.importarJson(fuente);
+                    final int cantidad = importados.size();
+                    if (cantidad > 0) {
+                        synchronized (contactosLock) {
+                            contactos.addAll(importados);
+                            dao.actualizarContactos(contactos);
+                        }
+                    }
+
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            refrescarTabla();
+                            actualizarEstadisticas();
+                            if (cantidad == 0) {
+                                JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonEmpty"));
+                            } else {
+                                JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.importedJson"), cantidad));
+                            }
+                            notificarAsync(i18n.t("status.imported"));
+                        }
+                    });
+                } catch (IOException ex) {
+                    SwingUtilities.invokeLater(new Runnable() {
+                        @Override
+                        public void run() {
+                            setUiBusy(false);
+                            JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonError"));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
     private String[] obtenerCabecerasCsv() {
         return new String[] {
             i18n.t("csv.header.name"),
@@ -834,6 +952,8 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         delegado.btn_modificar.setText(i18n.t("button.update"));
         delegado.btn_eliminar.setText(i18n.t("button.delete"));
         delegado.btn_exportar.setText(i18n.t("button.export"));
+        delegado.btn_importar_json.setText(i18n.t("button.importJson"));
+        delegado.btn_exportar_json.setText(i18n.t("button.exportJson"));
 
         delegado.mnu_editar.setText(i18n.t("menu.edit"));
         delegado.mnu_eliminar.setText(i18n.t("menu.delete"));
@@ -979,6 +1099,8 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
                 delegado.btn_modificar.setEnabled(!uiBusy);
                 delegado.btn_eliminar.setEnabled(!uiBusy);
                 delegado.btn_exportar.setEnabled(!uiBusy);
+                delegado.btn_importar_json.setEnabled(!uiBusy);
+                delegado.btn_exportar_json.setEnabled(!uiBusy);
                 delegado.cmb_categoria.setEnabled(!uiBusy);
                 delegado.cmb_filtro_categoria.setEnabled(!uiBusy);
                 delegado.cmb_idioma.setEnabled(!uiBusy);
@@ -1056,6 +1178,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             eliminarSeleccionado();
         } else if (source == delegado.btn_exportar || source == delegado.mnu_exportar) {
             exportarCsv();
+        } else if (source == delegado.btn_importar_json) {
+            importarJson();
+        } else if (source == delegado.btn_exportar_json) {
+            exportarJson();
         } else if (source == delegado.mnu_favorito) {
             alternarFavoritoSeleccionado();
         }

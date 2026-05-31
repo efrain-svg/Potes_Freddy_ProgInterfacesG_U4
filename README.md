@@ -70,6 +70,12 @@ Esta version mejora la experiencia de usuario con una interfaz mas moderna y est
 - Bloqueo de edicion para prevenir modificaciones simultaneas.
 - Notificaciones de estado en hilo dedicado con actualizacion segura del UI.
 
+### 7) U4: JSON y auditoria de dependencias
+- Serializacion y deserializacion de contactos en JSON con Gson.
+- Importacion y exportacion de contactos desde/hacia archivos JSON.
+- Auditoria de vulnerabilidades con OWASP Dependency-Check.
+- Versiones centralizadas y exclusion de transitivas en `pom.xml`.
+
 ## Ejecucion rapida (PowerShell)
 ```powershell
 Set-Location "C:\Users\Freddy Potes\IdeaProjects\u1c5_AGC"
@@ -78,7 +84,15 @@ javac -cp ".\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.j
 java --enable-native-access=ALL-UNNAMED -cp ".\out;.\lib\flatlaf-3.6.jar;.\lib\flatlaf-extras-3.6.jar;.\lib\jsvg-1.4.0.jar" vista.ventana
 ```
 
+> Nota: Si compilas manualmente, agrega `gson-2.11.0.jar` a `lib/` y al `-cp`, o usa Maven para descargar dependencias.
+
 > Nota: El flag `--enable-native-access=ALL-UNNAMED` evita warnings de acceso nativo en Java recientes al usar FlatLaf.
+
+## Auditoria de dependencias (OWASP)
+```powershell
+Set-Location "C:\Users\Freddy Potes\IdeaProjects\u1c5_AGC"
+mvn org.owasp:dependency-check-maven:check
+```
 
 ## Opcion con Maven (incluye FlatLaf)
 ```powershell
