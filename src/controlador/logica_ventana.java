@@ -1,7 +1,6 @@
 package controlador;
 
 import java.awt.Component;
-import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
@@ -16,7 +15,9 @@ import java.io.IOException;
 import java.text.MessageFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,7 +44,6 @@ import javax.swing.event.ListSelectionListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableRowSorter;
 
 import modelo.persona;
@@ -51,7 +51,6 @@ import modelo.personaDAO;
 import vista.ventana;
 import vista.i18n.I18n;
 import vista.theme.SvgIconLoader;
-import vista.theme.ThemeManager;
 
 public class logica_ventana implements ActionListener, ListSelectionListener, ItemListener {
 
@@ -96,7 +95,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         this.delegado = delegado;
         this.dao = new personaDAO(new persona());
         this.i18n = new I18n();
-        this.contactos = new ArrayList<persona>();
+        this.contactos = new ArrayList<>();
 
         configurarEventos();
         configurarTablaYFiltro();
@@ -137,8 +136,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     }
 
     private void configurarTablaYFiltro() {
-        sorter = new TableRowSorter<DefaultTableModel>(delegado.modeloTabla);
-        delegado.tbl_contactos.setRowSorter(sorter);
+        sorter = new TableRowSorter<>(delegado.modeloTabla);
 
         configurarColumnasTabla();
 
@@ -270,7 +268,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         delegado.pgb_carga.setIndeterminate(true);
         actualizarEstado(i18n.t("status.loading"));
 
-        SwingWorker<List<persona>, Void> worker = new SwingWorker<List<persona>, Void>() {
+        SwingWorker<List<persona>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<persona> doInBackground() throws Exception {
                 return dao.leerArchivo();
@@ -308,7 +306,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
                     p.getTelefono(),
                     p.getEmail(),
                     categoriaLabelPorCodigo(p.getCategoria()),
-                    Boolean.valueOf(p.isFavorito())
+                    p.isFavorito()
                 });
             }
         }
@@ -327,10 +325,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
 
         // Busqueda en segundo plano para evitar bloqueos en UI con listas grandes.
         notificarAsync(i18n.t("status.searching"));
-        searchWorker = new SwingWorker<RowFilter<Object, Object>, Void>() {
+        searchWorker = new SwingWorker<>() {
             @Override
             protected RowFilter<Object, Object> doInBackground() {
-                List<RowFilter<Object, Object>> filtros = new ArrayList<RowFilter<Object, Object>>();
+                List<RowFilter<Object, Object>> filtros = new ArrayList<>();
 
                 if (!texto.isEmpty()) {
                     String patron = "(?i)" + Pattern.quote(texto);
@@ -698,81 +696,79 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         setUiBusy(true);
         notificarAsync(i18n.t("status.importing"));
 
-        exportExecutor.submit(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    List<persona> importados = dao.importarJson(fuente);
-                    int duplicados = 0;
-                    int agregados = 0;
-
-                    if (!importados.isEmpty()) {
-                        List<persona> nuevos = new ArrayList<persona>();
-                        synchronized (contactosLock) {
-                            for (persona candidato : importados) {
-                                if (candidato == null) {
-                                    continue;
-                                }
-                                boolean esDup = false;
-                                for (persona existente : contactos) {
-                                    if (esDuplicado(existente, candidato.getNombre(), candidato.getTelefono(), candidato.getEmail())) {
-                                        esDup = true;
-                                        break;
-                                    }
-                                }
-                                if (!esDup) {
-                                    for (persona yaAgregado : nuevos) {
-                                        if (esDuplicado(yaAgregado, candidato.getNombre(), candidato.getTelefono(), candidato.getEmail())) {
-                                            esDup = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (esDup) {
-                                    duplicados++;
-                                    continue;
-                                }
-                                nuevos.add(candidato);
-                            }
-
-                            if (!nuevos.isEmpty()) {
-                                contactos.addAll(nuevos);
-                                dao.actualizarContactos(contactos);
-                            }
-                        }
-                        agregados = nuevos.size();
+        exportExecutor.submit(() -> {
+            try {
+                ResultadoImportacion resultado = procesarImportacion(dao.importarJson(fuente));
+                SwingUtilities.invokeLater(() -> {
+                    setUiBusy(false);
+                    refrescarTabla();
+                    actualizarEstadisticas();
+                    if (resultado.total == 0) {
+                        JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonEmpty"));
+                    } else if (resultado.agregados == 0 && resultado.duplicados > 0) {
+                        JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonAllDuplicates"));
+                    } else {
+                        JOptionPane.showMessageDialog(
+                            delegado,
+                            MessageFormat.format(i18n.t("msg.importedJsonDedup"), resultado.agregados, resultado.duplicados)
+                        );
                     }
-
-                    final int cantidad = importados.size();
-                    final int agregadosFinal = agregados;
-                    final int duplicadosFinal = duplicados;
-                    SwingUtilities.invokeLater(new Runnable() {
-                        @Override
-                        public void run() {
-                            setUiBusy(false);
-                            refrescarTabla();
-                            actualizarEstadisticas();
-                            if (cantidad == 0) {
-                                JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonEmpty"));
-                            } else if (agregadosFinal == 0 && duplicadosFinal > 0) {
-                                JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonAllDuplicates"));
-                            } else {
-                                JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.importedJsonDedup"), agregadosFinal, duplicadosFinal));
-                            }
-                            notificarAsync(i18n.t("status.imported"));
-                        }
-                    });
-                } catch (IOException ex) {
-                    SwingUtilities.invokeLater(new Runnable() {
-                        @Override
-                        public void run() {
-                            setUiBusy(false);
-                            JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonError"));
-                        }
-                    });
-                }
+                    notificarAsync(i18n.t("status.imported"));
+                });
+            } catch (IOException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    setUiBusy(false);
+                    JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonError"));
+                });
             }
         });
+    }
+
+    private ResultadoImportacion procesarImportacion(List<persona> importados) throws IOException {
+        ResultadoImportacion resultado = new ResultadoImportacion(importados == null ? 0 : importados.size());
+        if (importados == null || importados.isEmpty()) {
+            return resultado;
+        }
+
+        List<persona> nuevos = new ArrayList<>();
+        synchronized (contactosLock) {
+            Set<String> emails = new HashSet<>();
+            Set<String> telefonos = new HashSet<>();
+            for (persona existente : contactos) {
+                registrarClaveContacto(existente, emails, telefonos);
+            }
+
+            for (persona candidato : importados) {
+                if (candidato == null) {
+                    continue;
+                }
+                String emailNorm = normalizarEmail(candidato.getEmail());
+                String telNorm = normalizarTelefono(candidato.getTelefono());
+                if (esDuplicadoEnSets(emailNorm, telNorm, emails, telefonos)) {
+                    resultado.duplicados++;
+                    continue;
+                }
+                nuevos.add(candidato);
+                registrarClaveContacto(emailNorm, telNorm, emails, telefonos);
+            }
+
+            if (!nuevos.isEmpty()) {
+                contactos.addAll(nuevos);
+                dao.actualizarContactos(contactos);
+            }
+        }
+        resultado.agregados = nuevos.size();
+        return resultado;
+    }
+
+    private static final class ResultadoImportacion {
+        private final int total;
+        private int agregados;
+        private int duplicados;
+
+        private ResultadoImportacion(int total) {
+            this.total = total;
+        }
     }
 
     private String[] obtenerCabecerasCsv() {
@@ -787,7 +783,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     }
 
     private List<String[]> construirFilasCsv(List<persona> personasVisibles) {
-        List<String[]> filas = new ArrayList<String[]>();
+        List<String[]> filas = new ArrayList<>();
         for (persona p : personasVisibles) {
             String fecha = p.getFechaRegistro() == null ? "" : i18n.formatDate(p.getFechaRegistro());
             filas.add(new String[] {
@@ -803,7 +799,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     }
 
     private List<persona> obtenerContactosVisibles() {
-        List<persona> visibles = new ArrayList<persona>();
+        List<persona> visibles = new ArrayList<>();
         synchronized (contactosLock) {
             for (int filaVista = 0; filaVista < delegado.tbl_contactos.getRowCount(); filaVista++) {
                 int filaModelo = delegado.tbl_contactos.convertRowIndexToModel(filaVista);
@@ -896,21 +892,14 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
     }
 
     private String obtenerCodigoCategoriaFormulario() {
-        int idx = delegado.cmb_categoria.getSelectedIndex();
-        if (idx == 1) {
-            return CAT_FAMILY;
-        }
-        if (idx == 2) {
-            return CAT_FRIENDS;
-        }
-        if (idx == 3) {
-            return CAT_WORK;
-        }
-        return "";
+        return obtenerCodigoCategoriaPorIndice(delegado.cmb_categoria.getSelectedIndex());
     }
 
     private String obtenerCodigoCategoriaFiltro() {
-        int idx = delegado.cmb_filtro_categoria.getSelectedIndex();
+        return obtenerCodigoCategoriaPorIndice(delegado.cmb_filtro_categoria.getSelectedIndex());
+    }
+
+    private String obtenerCodigoCategoriaPorIndice(int idx) {
         if (idx == 1) {
             return CAT_FAMILY;
         }
@@ -1041,7 +1030,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         setUiBusy(true);
         notificarAsync(i18n.t("status.validating"));
 
-        SwingWorker<Boolean, Void> worker = new SwingWorker<Boolean, Void>() {
+        SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
             @Override
             protected Boolean doInBackground() {
                 synchronized (contactosLock) {
@@ -1092,10 +1081,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         if (existente == null) {
             return false;
         }
-        String emailNuevo = email == null ? "" : email.trim().toLowerCase();
-        String emailExistente = existente.getEmail() == null ? "" : existente.getEmail().trim().toLowerCase();
-        String telNuevo = telefono == null ? "" : telefono.trim();
-        String telExistente = existente.getTelefono() == null ? "" : existente.getTelefono().trim();
+        String emailNuevo = normalizarEmail(email);
+        String emailExistente = normalizarEmail(existente.getEmail());
+        String telNuevo = normalizarTelefono(telefono);
+        String telExistente = normalizarTelefono(existente.getTelefono());
 
         if (!emailNuevo.isEmpty() && emailNuevo.equals(emailExistente)) {
             return true;
@@ -1119,15 +1108,41 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
         }
     }
 
+    private boolean esDuplicadoEnSets(String emailNorm, String telNorm, Set<String> emails, Set<String> telefonos) {
+        if (!emailNorm.isEmpty() && emails.contains(emailNorm)) {
+            return true;
+        }
+        return !telNorm.isEmpty() && telefonos.contains(telNorm);
+    }
+
+    private void registrarClaveContacto(persona contacto, Set<String> emails, Set<String> telefonos) {
+        if (contacto == null) {
+            return;
+        }
+        registrarClaveContacto(normalizarEmail(contacto.getEmail()), normalizarTelefono(contacto.getTelefono()), emails, telefonos);
+    }
+
+    private void registrarClaveContacto(String emailNorm, String telNorm, Set<String> emails, Set<String> telefonos) {
+        if (!emailNorm.isEmpty()) {
+            emails.add(emailNorm);
+        }
+        if (!telNorm.isEmpty()) {
+            telefonos.add(telNorm);
+        }
+    }
+
+    private String normalizarEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase();
+    }
+
+    private String normalizarTelefono(String telefono) {
+        return telefono == null ? "" : telefono.trim();
+    }
+
     private void setUiBusy(boolean busy) {
         int count = busy
             ? busyCount.incrementAndGet()
-            : busyCount.updateAndGet(new java.util.function.IntUnaryOperator() {
-                @Override
-                public int applyAsInt(int value) {
-                    return value > 0 ? value - 1 : 0;
-                }
-            });
+            : busyCount.updateAndGet(value -> value > 0 ? value - 1 : 0);
         final boolean uiBusy = count > 0;
         SwingUtilities.invokeLater(new Runnable() {
             @Override
@@ -1188,7 +1203,7 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             @Override
             public Component getTableCellRendererComponent(javax.swing.JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-                boolean fav = value instanceof Boolean ? ((Boolean) value).booleanValue() : false;
+                boolean fav = value instanceof Boolean && ((Boolean) value).booleanValue();
                 setHorizontalAlignment(SwingConstants.CENTER);
                 setIcon(fav ? iconStarOn : iconStarOff);
                 setText(getIcon() == null ? (fav ? i18n.t("csv.value.yes") : i18n.t("csv.value.no")) : "");
