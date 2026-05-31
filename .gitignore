@@ -4,4 +4,5 @@
 .project
 .idea/
 out/
+/target/
 *.iml
