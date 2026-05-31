@@ -703,14 +703,49 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
             public void run() {
                 try {
                     List<persona> importados = dao.importarJson(fuente);
-                    final int cantidad = importados.size();
-                    if (cantidad > 0) {
+                    int duplicados = 0;
+                    int agregados = 0;
+
+                    if (!importados.isEmpty()) {
+                        List<persona> nuevos = new ArrayList<persona>();
                         synchronized (contactosLock) {
-                            contactos.addAll(importados);
-                            dao.actualizarContactos(contactos);
+                            for (persona candidato : importados) {
+                                if (candidato == null) {
+                                    continue;
+                                }
+                                boolean esDup = false;
+                                for (persona existente : contactos) {
+                                    if (esDuplicado(existente, candidato.getNombre(), candidato.getTelefono(), candidato.getEmail())) {
+                                        esDup = true;
+                                        break;
+                                    }
+                                }
+                                if (!esDup) {
+                                    for (persona yaAgregado : nuevos) {
+                                        if (esDuplicado(yaAgregado, candidato.getNombre(), candidato.getTelefono(), candidato.getEmail())) {
+                                            esDup = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (esDup) {
+                                    duplicados++;
+                                    continue;
+                                }
+                                nuevos.add(candidato);
+                            }
+
+                            if (!nuevos.isEmpty()) {
+                                contactos.addAll(nuevos);
+                                dao.actualizarContactos(contactos);
+                            }
                         }
+                        agregados = nuevos.size();
                     }
 
+                    final int cantidad = importados.size();
+                    final int agregadosFinal = agregados;
+                    final int duplicadosFinal = duplicados;
                     SwingUtilities.invokeLater(new Runnable() {
                         @Override
                         public void run() {
@@ -719,8 +754,10 @@ public class logica_ventana implements ActionListener, ListSelectionListener, It
                             actualizarEstadisticas();
                             if (cantidad == 0) {
                                 JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonEmpty"));
+                            } else if (agregadosFinal == 0 && duplicadosFinal > 0) {
+                                JOptionPane.showMessageDialog(delegado, i18n.t("msg.importJsonAllDuplicates"));
                             } else {
-                                JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.importedJson"), cantidad));
+                                JOptionPane.showMessageDialog(delegado, MessageFormat.format(i18n.t("msg.importedJsonDedup"), agregadosFinal, duplicadosFinal));
                             }
                             notificarAsync(i18n.t("status.imported"));
                         }
